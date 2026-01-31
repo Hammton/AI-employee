@@ -1,0 +1,17 @@
+composio-core==0.5.51
+composio-langchain==0.5.51
+langchain
+langchain-openai
+openai
+fastapi
+uvicorn
+python-multipart
+httpx
+qrcode
+pillow
+python-dotenv
+pypdf
+python-docx
+pydantic
+modal  # For serverless agent execution
+mem0ai  # Intelligent memory and context management

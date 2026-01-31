@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+server.log
+
+# Memory
+memory/*.json
+
+# Session data
+session_data/
+
+# Node modules
+node_modules/
+wpp-bridge/node_modules/
+wpp-bridge/tokens/
+
+# Cache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Temporary files
+*.tmp
+*.temp
+nul
+python
+output.txt
+qr_test.png
+
+# Images (except docs)
+*.jpg
+*.png
+*.gif
+!docs/*.png
+!docs/*.jpg

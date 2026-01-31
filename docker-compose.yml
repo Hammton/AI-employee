@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # Python Backend - The Brain
+  pocket-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - COMPOSIO_API_KEY=${COMPOSIO_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-4o}
+      - VISION_MODEL=${VISION_MODEL:-openai/gpt-4o}
+      - IMAGE_MODEL=${IMAGE_MODEL:-google/gemini-2.5-flash-image-preview}
+      - WPP_BRIDGE_URL=http://wpp-bridge:3001
+      - USER_PHONE=${USER_PHONE}
+    depends_on:
+      wpp-bridge:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - trace-network
+
+  # Node.js WPP Bridge - The WhatsApp Layer
+  wpp-bridge:
+    build:
+      context: ./wpp-bridge
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PYTHON_CALLBACK_URL=http://pocket-agent:8000
+      - PORT=3001
+    volumes:
+      - wpp-tokens:/app/tokens
+    restart: unless-stopped
+    networks:
+      - trace-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3001/api/status" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  trace-network:
+    driver: bridge
+
+volumes:
+  wpp-tokens:
+    driver: local

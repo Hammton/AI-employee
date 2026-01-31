@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: pocketagent
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: |
+      pip install -r requirements.txt
+      cd wpp-bridge && npm install && cd ..
+    startCommand: bash start_render.sh
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: MEM0_API_KEY
+        sync: false
+      - key: PORT
+        value: 8000
+      - key: WPP_BRIDGE_URL
+        value: http://localhost:3001
+      - key: WPP_BRIDGE_PORT
+        value: 3001
+      - key: LLM_MODEL
+        value: google/gemini-3-flash-preview
+      - key: VISION_MODEL
+        value: google/gemini-3-flash-preview
+      - key: IMAGE_MODEL
+        value: google/gemini-2.5-flash-image
+      - key: WPP_HEADLESS
+        value: true
+      - key: AUTONOMOUS_EXECUTION_APPROVAL
+        value: true

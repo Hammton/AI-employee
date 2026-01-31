@@ -1,0 +1,13 @@
+{
+  "name": "RAG Engineer for Search & Content",
+  "version": "1.0.0",
+  "description": "Automatically use rag-engineer skill for web search, content search, chunking and retrieval",
+  "when": {
+    "type": "promptSubmit",
+    "patterns": []
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "When performing web search, content search, or document retrieval tasks, use the rag-engineer skill from antigravity-awesome-skills to:\n\n1. SEARCH: Intelligently query and retrieve relevant content from web sources\n2. CHUNKING: Break down large content into optimal chunks for processing\n3. RETRIEVAL: Extract and organize the most relevant information\n4. SYNTHESIS: Combine and present the information in a coherent way\n\nUse the command: npx skills add https://github.com/sebas-aikon-intelligence/antigravity-awesome-skills --skill rag-engineer\n\nThen proceed with the user's search or content retrieval request."
+  }
+}

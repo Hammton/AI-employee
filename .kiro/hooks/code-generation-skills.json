@@ -1,0 +1,13 @@
+{
+  "name": "Enhanced Coding with Antigravity Skills",
+  "version": "1.0.0",
+  "description": "Automatically use antigravity-awesome-skills for coding, debugging, and testing",
+  "when": {
+    "type": "promptSubmit",
+    "patterns": []
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Before proceeding with any coding, debugging, or testing task, use the antigravity-awesome-skills MCP tools to:\n\n1. For CODING: Check best practices, apply design patterns, ensure code quality and maintainability\n2. For DEBUGGING: Analyze errors systematically, suggest fixes, and validate solutions\n3. For TESTING: Generate comprehensive test cases, check edge cases, and ensure proper coverage\n\nThen proceed with the user's request using these enhanced capabilities."
+  }
+}
