@@ -557,11 +557,45 @@ Use ANCHOR_BROWSER_PERFORM_WEB_TASK to browse the web and complete web-based tas
             browser_capabilities = """
 WEB BROWSING: You do NOT have web browsing capabilities. If the user asks you to browse the web, visit URLs, or search the internet, politely explain that you don't have that capability and suggest they connect Anchor Browser using the generate_auth_link tool."""
         
+        # Check if image generation is available
+        image_capabilities = ""
+        if self.image_model:
+            image_capabilities = f"""
+🎨 IMAGE GENERATION: You CAN generate images! You have access to the {self.image_model} model.
+
+When users ask you to:
+- "Generate an image of..."
+- "Create a picture of..."
+- "Make an image of..."
+- "Draw..."
+- "Show me a picture of..."
+
+You should IMMEDIATELY generate the image for them. Don't say you can't - you absolutely CAN!
+
+IMPORTANT: When a user asks for an image, you must:
+1. Acknowledge their request
+2. Generate the image using your image generation capability
+3. Send them the generated image
+
+Examples of what you CAN do:
+✅ "Generate an image of a sunset over mountains"
+✅ "Create a picture of a modern house by the beach"
+✅ "Make an image of a futuristic city"
+✅ "Draw a cute cat"
+✅ "Show me a picture of a luxury car"
+
+Never say "I cannot generate images" - you absolutely CAN and SHOULD generate images when asked!"""
+        else:
+            image_capabilities = """
+IMAGE GENERATION: You do NOT have image generation capabilities. If users ask you to generate images, politely explain that you don't have that capability."""
+        
         system_prompt = f"""You are a powerful AI assistant that can ACTUALLY DO THINGS, not just talk about them.
 
 {autonomous_capabilities}
 
 CONNECTED APPS: {connected_apps_list}
+
+{image_capabilities}
 
 IMPORTANT - You can ONLY use tools from the apps listed above. Do NOT claim to have capabilities you don't have.
 

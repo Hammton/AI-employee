@@ -218,7 +218,11 @@ def _extract_image_prompt(text: str) -> Optional[str]:
     # Check for simple keyword combinations first (Most robust)
     lowered = trimmed.lower()
 
-    # 1. Check for "generate/create" + "image/picture" anywhere in the text
+    # 1. Check for /image command first (highest priority)
+    if lowered.startswith("/image") or lowered.startswith("/img"):
+        return trimmed.replace("/image", "").replace("/img", "").strip()
+
+    # 2. Check for "generate/create/make/draw" at the start (strong signal for image generation)
     generation_verbs = [
         "generate",
         "create",
@@ -227,18 +231,29 @@ def _extract_image_prompt(text: str) -> Optional[str]:
         "render",
         "design",
         "produce",
+        "show me",
+        "give me",
     ]
-    visual_nouns = ["image", "picture", "photo", "illustration", "art", "drawing"]
-
-    has_verb = any(v in lowered for v in generation_verbs)
+    
+    # Check if message starts with a generation verb
+    starts_with_verb = any(lowered.startswith(v) for v in generation_verbs)
+    
+    if starts_with_verb:
+        # If it starts with a generation verb, it's likely an image request
+        # Examples: "Generate a house", "Create a sunset", "Draw a cat"
+        logger.info(f"🎨 Detected image request (starts with generation verb): {trimmed[:50]}...")
+        return trimmed
+    
+    # 3. Check for explicit "image/picture/photo" keywords
+    visual_nouns = ["image", "picture", "photo", "illustration", "art", "drawing", "artwork"]
     has_noun = any(n in lowered for n in visual_nouns)
-
-    print(f"DEBUG: Text='{trimmed}', has_verb={has_verb}, has_noun={has_noun}")
-
+    
+    # 4. Check for "generate/create" + "image/picture" anywhere in the text
+    has_verb = any(v in lowered for v in generation_verbs)
+    
     if has_verb and has_noun:
-        # It's likely an image request.
-        # Clean it up: remove the "Please" and maybe "Generate an image of" parts if easy,
-        # but modern models handle the full sentence "Generate a cat..." perfectly fine.
+        # It's likely an image request with explicit visual noun
+        logger.info(f"🎨 Detected image request (verb + noun): {trimmed[:50]}...")
         clean_prompt = (
             trimmed.replace("Please ", "")
             .replace("please ", "")
@@ -248,14 +263,11 @@ def _extract_image_prompt(text: str) -> Optional[str]:
         )
         return clean_prompt or trimmed
 
-    # 2. Check for explicit "image of..." patterns
+    # 5. Check for explicit "image of..." patterns
     for key in ["image of", "picture of", "photo of", "illustration of", "art of"]:
         if key in lowered:
+            logger.info(f"🎨 Detected image request (explicit pattern): {trimmed[:50]}...")
             return trimmed
-
-    # 3. Last check for /image command style if missed by main logic
-    if lowered.startswith("/image") or lowered.startswith("/img"):
-        return trimmed.replace("/image", "").replace("/img", "").strip()
 
     return None
 
