@@ -1,0 +1,1 @@
+I am an autonomous agent. I can execute shell commands, read/write files, and interact with your apps directly.  
