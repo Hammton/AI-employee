@@ -939,154 +939,97 @@ Be helpful and provide clear responses about what you're doing."""
             logger.warning("No IMAGE_MODEL configured")
             return None
 
+        if not self.api_key:
+            logger.warning("No API key configured")
+            return None
+
         try:
-            # Try dedicated image client first (OpenAI-compatible images.generate)
-            if self.image_client:
-                logger.info(f"Using image_client with model: {self.image_model}")
-                result = self.image_client.images.generate(
-                    model=self.image_model,
-                    prompt=prompt,
-                    size=size,
-                    response_format="b64_json",
-                )
-                if not result.data:
-                    logger.warning("No data in image result")
-                    return None
-                b64 = result.data[0].b64_json
-                if not b64:
-                    logger.warning("No b64_json in image result")
-                    return None
-                logger.info("✅ Image generated via image_client")
-                return base64.b64decode(b64)
-
-            # Fallback to OpenRouter with Gemini native image generation
-            if not self.openai_client:
-                logger.warning("No openai_client available")
+            # OpenRouter image generation using chat completions endpoint with modalities
+            # CRITICAL: modalities: ["image", "text"] is REQUIRED for image output
+            # Based on official OpenRouter SDK: https://openrouter.ai/docs/frameworks/javascript
+            import requests
+            
+            logger.info(f"📤 Sending request to OpenRouter...")
+            logger.info(f"   Model: {self.image_model}")
+            logger.info(f"   Prompt: {prompt[:100]}...")
+            
+            # Use raw HTTP request because OpenAI SDK doesn't properly support modalities parameter
+            # The modalities parameter MUST be at the root level of the JSON payload
+            payload = {
+                "model": self.image_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "modalities": ["image", "text"],  # CRITICAL: Must be at root level
+                "max_tokens": 4096
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/Hammton/AI-employee",  # Optional but recommended
+                "X-Title": "PocketAgent"  # Optional but recommended
+            }
+            
+            logger.info(f"📤 Request payload keys: {payload.keys()}")
+            logger.info(f"📤 Modalities: {payload['modalities']}")
+            
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            logger.info(f"📥 Response status: {response.status_code}")
+            
+            if not response.ok:
+                logger.error(f"❌ OpenRouter API returned {response.status_code}")
+                logger.error(f"❌ Response text: {response.text[:500]}")
                 return None
-
-            logger.info(
-                f"Using openai_client (OpenRouter) with model: {self.image_model}"
-            )
-
-            logger.info(
-                f"⏳ Calling OpenRouter API for image generation (Model: {self.image_model})..."
-            )
-            # Gemini image generation via OpenRouter
-            # IMPORTANT: modalities: ["image", "text"] is REQUIRED for image output
-            # max_tokens limited to avoid 402 errors with low credits
-            try:
-                result = self.openai_client.chat.completions.create(
-                    model=self.image_model,
-                    messages=[
-                        {"role": "user", "content": f"Generate an image: {prompt}"}
-                    ],
-                    max_tokens=4096,
-                )
-                logger.info("✅ OpenRouter API call returned successfully")
-            except Exception as api_err:
-                logger.error(f"❌ OpenRouter API call failed: {api_err}")
-                raise api_err
-
-            message = result.choices[0].message
-            content = message.content
-
-            # Log raw message for debugging
-            logger.info(f"Image generation response - content type: {type(content)}")
-            logger.info(f"Message attributes: {dir(message)}")
-
-            # Check for various response formats
-
-            # Format 1: Images attribute on message (OpenRouter standard)
-            # According to OpenRouter docs: images will be in message.images as data URLs
-            images = getattr(message, "images", None)
+            
+            result = response.json()
+            logger.info(f"📥 Response JSON keys: {result.keys()}")
+            
+            # Extract message from response
+            message = result["choices"][0]["message"]
+            logger.info(f"📥 Message keys: {message.keys()}")
+            
+            # Check for images in response (OpenRouter format)
+            # According to OpenRouter SDK: message.images[].image_url.url contains data URL
+            images = message.get("images")
             if images:
-                logger.info(f"Found 'images' attribute with {len(images)} image(s)")
+                logger.info(f"✅ Found {len(images)} image(s) in response")
                 for i, img in enumerate(images):
-                    logger.info(f"Image {i}: type={type(img)}, value={str(img)[:100]}")
-                    # Handle dict format
+                    logger.info(f"   Image {i}: {type(img)}")
                     if isinstance(img, dict):
-                        url = (
-                            img.get("image_url", {}).get("url")
-                            or img.get("url")
-                            or img.get("data")
-                        )
+                        # OpenRouter format: image.image_url.url
+                        image_url_obj = img.get("image_url", {})
+                        if isinstance(image_url_obj, dict):
+                            url = image_url_obj.get("url")
+                            if url:
+                                logger.info(f"   Found data URL: {url[:50]}...")
+                                return self._decode_data_url(url)
+                        # Alternative format: direct url
+                        url = img.get("url")
                         if url:
+                            logger.info(f"   Found direct URL: {url[:50]}...")
                             return self._decode_data_url(url)
-                    # Handle string format (direct data URL)
-                    elif isinstance(img, str):
-                        if img.startswith("data:image"):
-                            return self._decode_data_url(img)
-
-            # Format 2: Direct data URL in content string
-            if isinstance(content, str):
-                # Check if it's a data URL
-                if "data:image" in content:
-                    # Extract data URL from content
-                    import re
-
-                    match = re.search(
-                        r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+", content
-                    )
-                    if match:
-                        logger.info("Found data URL in content string")
-                        return self._decode_data_url(match.group(0))
-
-                # Check if it's raw base64
-                if (
-                    len(content) > 100
-                    and not content.startswith("I ")
-                    and not content.startswith("Sorry")
-                ):
-                    try:
-                        decoded = base64.b64decode(content)
-                        if (
-                            decoded[:8] == b"\x89PNG\r\n\x1a\n"
-                            or decoded[:3] == b"\xff\xd8\xff"
-                        ):
-                            logger.info("Found raw base64 image in response")
-                            return decoded
-                    except:
-                        pass
-
-            # Format 3: List content with inline_data (Gemini native)
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict):
-                        inline_data = part.get("inline_data") or part.get("inlineData")
-                        if inline_data:
-                            data = inline_data.get("data")
-                            if data:
-                                logger.info("Found inline_data in response")
-                                return base64.b64decode(data)
-
-                        # Check for image_url format
-                        image_url = part.get("image_url", {}).get("url")
-                        if image_url:
-                            logger.info("Found image_url in response")
-                            return self._decode_data_url(image_url)
-
-                    elif isinstance(part, str) and part.startswith("data:image"):
-                        logger.info("Found data URL in list content")
-                        return self._decode_data_url(part)
-
-            # Format 4: Check raw result object for any image data
-            raw_attrs = ["images", "image", "media", "attachments"]
-            for attr in raw_attrs:
-                val = getattr(result.choices[0], attr, None) or getattr(
-                    message, attr, None
-                )
-                if val:
-                    logger.info(f"Found '{attr}' attribute: {str(val)[:100]}")
-
-            logger.warning(
-                f"Could not extract image from response. Content: {str(content)[:500]}"
-            )
+                    elif isinstance(img, str) and img.startswith("data:image"):
+                        logger.info(f"   Found string data URL: {img[:50]}...")
+                        return self._decode_data_url(img)
+            
+            # If no images found, log the full response for debugging
+            logger.warning("❌ No images found in response")
+            logger.warning(f"   Full message: {message}")
             return None
 
         except Exception as e:
             logger.error(f"Image Generation Error: {e}")
             import traceback
-
             logger.error(traceback.format_exc())
             return None
 
