@@ -121,6 +121,8 @@ cd ..
 
 ### Step 5: Configure Environment Variables
 
+
+
 Rename the example file:
 
 ```bash
@@ -258,6 +260,21 @@ node index.js
 cd pocket-agent
 python main_v2.py
 ```
+
+---
+
+## ☁️ Cloud Deployment (DigitalOcean)
+
+To run the agent 24/7 on a cloud server, we recommend DigitalOcean using the **Console** (easiest method).
+
+**👉 Read the Full Guide: [DEPLOYMENT.md](DEPLOYMENT.md)**
+
+This guide covers:
+1. Creating a Droplet
+2. Using the Browser Console
+3. Running the One-Click setup script (`deploy_vps.sh`)
+
+---
 
 ## 🎯 "Magic in Public" Usage
 
