@@ -8,18 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Direct Anchor Browser API integration for automatic web browsing
+- Moltbot information section in README
 - Hybrid app name extraction (regex + AI fallback) for connection errors
 - Enhanced error detection for Composio connection errors
 - Improved system prompt for Google Docs vs Google Sheets distinction
 - Comprehensive documentation structure
 
 ### Fixed
+- **Anchor Browser API endpoint** - Fixed 404 error by using correct endpoint:
+  - ❌ Old: `https://api.anchorbrowser.io/v1/browse`
+  - ✅ New: `https://api.anchorbrowser.io/v1/tools/perform-web-task`
+- **Anchor Browser authentication** - Fixed header format:
+  - ❌ Old: `Authorization: Bearer <key>`
+  - ✅ New: `anchor-api-key: <key>`
 - Agent crashing on connection errors - now provides auth links gracefully
 - Google Docs being confused with Google Sheets
 - Missing app name extraction from error messages
 - Connection error handling for unconnected apps
 
 ### Changed
+- Anchor Browser now works via direct API (no Composio connection needed)
+- Automatic web browsing when users post links or ask for latest info
+- Increased timeout for web tasks from 30s to 60s
+- Improved error handling with detailed logging for web browsing
 - Reorganized documentation into user-facing and development sections
 - Improved error messages with helpful auth links
 - Enhanced tool selection logic in system prompt

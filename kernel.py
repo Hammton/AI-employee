@@ -62,6 +62,7 @@ class AgentKernel:
         # API Keys
         self.api_key = os.environ.get("OPENROUTER_API_KEY")
         self.composio_api_key = os.environ.get("COMPOSIO_API_KEY")
+        self.anchor_browser_api_key = os.environ.get("ANCHOR_BROWSER_API_KEY")
         
         # Model configuration
         self.model = os.environ.get("LLM_MODEL", "google/gemini-3-flash-preview")
@@ -427,6 +428,82 @@ class AgentKernel:
             else:
                 return f"[NOT CONNECTED] {app_name.upper()} is not connected. The user needs to authenticate first using the generate_auth_link tool."
         
+        # Add direct web browsing tool if Anchor Browser API key is available
+        web_browsing_tools = []
+        if self.anchor_browser_api_key:
+            @tool
+            def browse_web(task: str) -> str:
+                """Browse the web, search for information, or visit URLs.
+                
+                Use this when users ask to:
+                - Search the web for latest information
+                - Visit a specific URL
+                - Check a link
+                - Get current news or updates
+                
+                Examples:
+                - "What's the latest news about AI?"
+                - "Search for Python 3.12 features"
+                - "Check this link: https://example.com"
+                - "Visit github.com and tell me about trending repos"
+                """
+                try:
+                    import requests
+                    import re
+                    
+                    # Try to extract URL from task if present
+                    url_pattern = r'https?://[^\s]+'
+                    urls = re.findall(url_pattern, task)
+                    
+                    # Build request payload
+                    payload = {
+                        "prompt": task,
+                        "async": False
+                    }
+                    
+                    # If URL found in task, add it to payload
+                    if urls:
+                        payload["url"] = urls[0]
+                    else:
+                        # Default to Google search if no URL specified
+                        payload["url"] = "https://www.google.com"
+                    
+                    # Call Anchor Browser API
+                    response = requests.post(
+                        "https://api.anchorbrowser.io/v1/tools/perform-web-task",
+                        headers={
+                            "anchor-api-key": self.anchor_browser_api_key,
+                            "Content-Type": "application/json"
+                        },
+                        json=payload,
+                        timeout=120
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        # Extract the result from nested structure: data.result.result
+                        if isinstance(result, dict):
+                            data = result.get("data", {})
+                            if isinstance(data, dict):
+                                result_obj = data.get("result", {})
+                                if isinstance(result_obj, dict):
+                                    final_result = result_obj.get("result", result_obj)
+                                    return str(final_result)
+                            return str(result)
+                        return str(result)
+                    else:
+                        logger.error(f"Anchor Browser API error: {response.status_code} - {response.text}")
+                        return f"Failed to browse web (HTTP {response.status_code}): {response.text}"
+                        
+                except Exception as e:
+                    logger.error(f"Web browsing failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return f"Web browsing error: {str(e)}"
+            
+            web_browsing_tools = [browse_web]
+            logger.info("✅ Direct web browsing enabled via Anchor Browser API")
+        
         # Add autonomous execution tools if available
         autonomous_tools = []
         if self.executor:
@@ -553,15 +630,15 @@ class AgentKernel:
 
         # Combine Composio tools (OpenAI format dicts) with custom LangChain tools
         # create_agent() accepts both formats
-        all_tools = composio_tools + [generate_auth_link, check_app_connection] + autonomous_tools
+        all_tools = composio_tools + [generate_auth_link, check_app_connection] + web_browsing_tools + autonomous_tools
         
-        logger.info(f"Total tools for agent: {len(all_tools)} ({len(composio_tools)} Composio + {2 + len(autonomous_tools)} custom)")
+        logger.info(f"Total tools for agent: {len(all_tools)} ({len(composio_tools)} Composio + {2 + len(web_browsing_tools) + len(autonomous_tools)} custom)")
 
         # Build dynamic system prompt based on connected apps
         connected_apps_list = ", ".join(self.active_apps) if self.active_apps else "none"
         
         # Check if web browsing is available
-        has_browser = any(app.upper() in ['ANCHOR_BROWSER', 'ANCHORBROWSER'] for app in self.active_apps)
+        has_browser = any(app.upper() in ['ANCHOR_BROWSER', 'ANCHORBROWSER'] for app in self.active_apps) or self.anchor_browser_api_key
         
         # Check if autonomous execution is available
         has_executor = self.executor is not None
@@ -569,34 +646,36 @@ class AgentKernel:
         autonomous_capabilities = ""
         if has_executor:
             autonomous_capabilities = """
-🤖 AUTONOMOUS EXECUTION: You can ACTUALLY DO THINGS, not just talk about them!
+🤖 WORKFLOW EXECUTION: You can execute multi-step tasks!
 
-You have these powerful capabilities:
-- execute_shell_command: Run commands on the user's computer (ls, mkdir, etc.)
-- read_local_file: Read files from the user's file system
-- list_local_directory: Browse the user's directories
-- execute_autonomous_workflow: Execute multi-step tasks autonomously
-
-IMPORTANT: You're not just a chatbot - you're an AUTONOMOUS AGENT that can:
-✅ Create files and folders
-✅ Run scripts and programs
-✅ Read and analyze local files
+You can:
 ✅ Execute complex multi-step workflows
 ✅ Actually complete tasks, not just suggest them
+✅ Work with cloud-based tools and integrations
 
-Example: If user says "create a folder called projects", you should:
-1. Use execute_shell_command("mkdir projects")
-2. Confirm it was created
-3. Tell the user it's done
+Example: If user says "research AI trends and save to Notion", you should:
+1. Use web browsing to research
+2. Use Notion tools to save the findings
+3. Confirm completion
 
 You're like Moltbot - you DO things, not just talk about them!"""
         else:
             autonomous_capabilities = """
-LOCAL EXECUTION: You do NOT have local execution capabilities. You can only work with cloud-based tools through Composio. If the user asks you to run commands or access local files, explain that you need the Autonomous Executor enabled."""
+WORKFLOW EXECUTION: You work with cloud-based tools through Composio to complete tasks."""
         
         browser_capabilities = ""
         if has_browser:
-            browser_capabilities = """
+            if self.anchor_browser_api_key:
+                browser_capabilities = """
+WEB BROWSING: You HAVE direct web browsing via Anchor Browser API! You can:
+- Search the web for latest information
+- Visit any URL and extract content
+- Check links users send
+- Get current news and updates
+
+Use the browse_web tool for ANY web-related task. It works automatically without requiring connection."""
+            else:
+                browser_capabilities = """
 WEB BROWSING: You HAVE web browsing capabilities through Anchor Browser! You can:
 - Visit any URL and extract content
 - Search the web for information
@@ -606,8 +685,7 @@ WEB BROWSING: You HAVE web browsing capabilities through Anchor Browser! You can
 
 Use ANCHOR_BROWSER_PERFORM_WEB_TASK to browse the web and complete web-based tasks."""
         else:
-            browser_capabilities = """
-WEB BROWSING: You do NOT have web browsing capabilities. If the user asks you to browse the web, visit URLs, or search the internet, politely explain that you don't have that capability and suggest they connect Anchor Browser using the generate_auth_link tool."""
+            browser_capabilities = ""
         
         # Check if image generation is available
         image_capabilities = ""

@@ -8,6 +8,20 @@ Trace Kernel is an intelligent, autonomous agent architected to bridge the gap b
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Phase](https://img.shields.io/badge/Phase-2_Complete-green.svg)]()
 
+## 🤖 What is Moltbot?
+
+**Moltbot** is an AI agent chatbot that can use various software apps and online tools. It accepts commands in plain English to perform tasks like editing documents, sending emails, or building apps. Moltbot is open-source and popular among AI researchers, developers, and tech enthusiasts.
+
+**Key Features**:
+- Uses software apps and online tools autonomously
+- Accepts plain English commands
+- Open-source architecture
+- Can edit documents, send emails, build apps
+
+**Moltbook**: A social network where 10,000+ Moltbots chat with each other, demonstrating the power of autonomous AI agents working together.
+
+**Note**: This project (Trace Kernel/Pocket Agent) is inspired by Moltbot's autonomous execution philosophy but focuses on production-ready, secure implementations with proper error handling and user control.
+
 ## ✨ Core Capabilities (The Refinery)
 
 - **🧠 Trace Kernel**: A monolithic cognitive engine that routes decisions based on intent intensity.
@@ -55,44 +69,195 @@ The system is designed as a **Decision Graph** rather than a simple chatbot.
 2.  **The Kernel (Port 8000)**: Python-based "Brain" that manages the **Ontology**. It doesn't just "chat"; it "refines" crude data into structured outcomes.
 3.  **Skill Registry**: A file-system based database of `SKILL.md` files. This is the **Institutional Memory**—if the server dies, the skills remain.
 
-## 🚀 Quick Start
+## 🚀 Installation Guide
 
-### Prerequisites
-- Python 3.12+
-- Node.js 18+
-- API Keys: OpenRouter, Composio
+Complete step-by-step setup. Follow each step in order.
 
-### Installation
+---
 
-1. **Clone the Registry**
-   ```bash
-   git clone https://github.com/yourusername/pocket-agent.git
-   cd pocket-agent
-   ```
+### Step 1: Prerequisites
 
-2. **Initialize the Factory**
-   ```bash
-   # Install Python deps (The Kernel)
-   pip install -r requirements.txt
-   
-   # Install Bridge deps (The Senses)
-   cd wpp-bridge && npm install && cd ..
-   ```
+Ensure you have the following installed:
 
-3. **Configure Secrets**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your keys
-   ```
+| Requirement | Version | Check Command |
+|-------------|---------|---------------|
+| Python | 3.12+ | `python --version` |
+| Node.js | 18+ | `node --version` |
+| npm | 9+ | `npm --version` |
+| Git | Any | `git --version` |
 
-4. **Ignite the Kernel**
-   ```bash
-   # Windows
-   start_local.bat
-   
-   # Linux/VPS
-   ./deploy_vps.sh
-   ```
+**Required API Keys:**
+- [OpenRouter API Key](https://openrouter.ai/keys) - For LLM access
+- [Composio API Key](https://app.composio.dev/settings) - For tool integrations
+
+---
+
+### Step 2: Clone the Repository
+
+```bash
+git clone https://github.com/yourusername/pocket-agent.git
+cd pocket-agent
+```
+
+---
+
+### Step 3: Install Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+### Step 4: Install Node.js Dependencies (WhatsApp Bridge)
+
+```bash
+cd wpp-bridge
+npm install
+cd ..
+```
+
+---
+
+### Step 5: Configure Environment Variables
+
+Rename the example file:
+
+```bash
+# Windows:
+ren .env.example .env
+
+# Linux/Mac:
+mv .env.example .env
+```
+
+Open `.env` and add your API keys:
+
+```env
+# Required API Keys
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+COMPOSIO_API_KEY=your-composio-key-here
+
+# Server Configuration
+PORT=8000
+WPP_BRIDGE_URL=http://localhost:3001
+WPP_BRIDGE_PORT=3001
+
+# AI Model (default works well)
+LLM_MODEL=google/gemini-2.5-flash
+```
+
+---
+
+### Step 6: Set Up Composio (Tool Integrations)
+
+Composio powers all the app integrations (Gmail, Calendar, Notion, etc.).
+
+**1. Create a Composio Account:**
+- Go to [https://app.composio.dev](https://app.composio.dev)
+- Sign up with Google or email
+- Copy your API key from Settings → API Keys
+
+**2. Add API Key to `.env`:**
+```env
+COMPOSIO_API_KEY=your-composio-key-here
+```
+
+**3. Connect Your Apps:**
+
+When you first use the agent, it will detect which apps you need and provide authentication links:
+
+```
+User: Send an email to john@example.com
+Agent: I tried to use GMAIL but you're not connected yet. 
+       Please authenticate here: https://app.composio.dev/auth/gmail/...
+```
+
+**→ Click the link → Authorize → Return to WhatsApp and say:**
+
+```
+User: I have authorized
+Agent: ✅ Gmail connected! Sending email now...
+```
+
+The agent will then proceed with your original request.
+
+**Pre-connect apps (optional):**
+You can also connect apps directly in Composio dashboard:
+- Go to [https://app.composio.dev/apps](https://app.composio.dev/apps)
+- Click on Gmail, Google Calendar, Notion, etc.
+- Click "Connect" and authorize
+
+---
+
+### Step 7: Start the WhatsApp Bridge (Terminal 1)
+
+Open a **new terminal window** and run:
+
+```bash
+cd pocket-agent/wpp-bridge
+node index.js
+```
+
+**Expected output:**
+```
+[WPP] Starting WhatsApp Bridge on port 3001...
+[WPP] Waiting for QR code...
+[WPP] ████████████████████████████
+[WPP] █ QR CODE WILL APPEAR HERE █
+[WPP] ████████████████████████████
+```
+
+**→ Scan the QR code with your phone** (WhatsApp > Settings > Linked Devices > Link a Device)
+
+---
+
+### Step 8: Start the Backend Server (Terminal 2)
+
+Open a **second terminal window** and run:
+
+```bash
+cd pocket-agent
+python main_v2.py
+```
+
+**Expected output:**
+```
+INFO:     Started server on http://0.0.0.0:8000
+INFO:     Application startup complete.
+🤖 Trace Kernel initialized. Ready to receive messages.
+```
+
+---
+
+### Step 9: Verify Connection
+
+Send a message to yourself on WhatsApp. If working correctly:
+1. You'll see the message logged in Terminal 2
+2. The agent will respond automatically
+
+**Test message:** `What can you do?`
+
+---
+
+## 🛑 Stopping the Servers
+
+- **WhatsApp Bridge:** Press `Ctrl+C` in Terminal 1
+- **Backend Server:** Press `Ctrl+C` in Terminal 2
+
+---
+
+## 🔄 Restarting After System Reboot
+
+```bash
+# Terminal 1: Start WhatsApp Bridge
+cd pocket-agent/wpp-bridge
+node index.js
+
+# Terminal 2: Start Backend Server
+cd pocket-agent
+python main_v2.py
+```
 
 ## 🎯 "Magic in Public" Usage
 
