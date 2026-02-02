@@ -15,3 +15,4 @@ python-docx
 pydantic
 modal  # For serverless agent execution
 mem0ai  # Intelligent memory and context management
+pyyaml  # YAML parsing for skills system

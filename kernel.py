@@ -2,7 +2,7 @@ import os
 import io
 import base64
 import logging
-from typing import Any, Optional, Literal, cast
+from typing import Any, Optional, Literal, cast, List, Dict
 from langchain_openai import ChatOpenAI
 from langchain import agents
 from composio import Composio
@@ -28,6 +28,15 @@ try:
 except ImportError:
     EXECUTOR_AVAILABLE = False
     logger.warning("AutonomousExecutor not available")
+
+# Import Skills System
+try:
+    from skills.skill_manager import SkillManager
+    from skills.skill_creator import SkillCreator, SkillBlueprint
+    SKILLS_AVAILABLE = True
+except ImportError:
+    SKILLS_AVAILABLE = False
+    logger.warning("Skills system not available - skills/ directory missing or skill_manager.py not found")
 
 
 class AgentKernel:
@@ -111,6 +120,26 @@ class AgentKernel:
                 self.executor = None
         else:
             logger.info("Autonomous Executor not available - running without local execution")
+        
+        # Initialize Skills System
+        self.skill_manager = None
+        self.skill_creator = None
+        self.active_skills = []
+        self._query_history = []  # For pattern detection
+        self._pending_skill_creation = None  # Tracks skill being created
+        
+        if SKILLS_AVAILABLE:
+            try:
+                self.skill_manager = SkillManager(skills_dir="skills", user_id=self.user_id)
+                self.skill_creator = SkillCreator(skills_dir="skills")
+                discovered = self.skill_manager.discover_skills()
+                logger.info(f"✅ Skills system initialized - {len(discovered)} skills available")
+            except Exception as e:
+                logger.warning(f"Skills system initialization failed: {e}")
+                self.skill_manager = None
+                self.skill_creator = None
+        else:
+            logger.info("Skills system not available - running without skills")
         
         logger.info(f"Kernel initialized for user: {self.user_id}, Model: {self.model}")
         if not self.api_key:
@@ -337,12 +366,26 @@ class AgentKernel:
 
         @tool
         def generate_auth_link(app_name: str) -> str:
-            """Get the authentication link to connect a new tool/app (like google, github, etc) and enable it.
+            """INTERNAL USE ONLY: Generate authentication link when a tool execution fails due to missing connection.
             
-            IMPORTANT: This tool checks if the user is already connected first.
-            If already connected, it returns a message saying so instead of generating a new link.
+            CRITICAL: This tool should ONLY be called when:
+            1. You already tried to use a tool (e.g., GOOGLESHEETS_CREATE_SPREADSHEET)
+            2. The tool failed with an authentication/connection error
+            3. You need to provide the user with an auth link to fix the issue
             
-            After the user connects, the tools for that app will be automatically loaded.
+            DO NOT call this tool preemptively. Always try to execute the actual tool first.
+            Let the tool fail, then use this to provide the auth link.
+            
+            Example WRONG usage:
+            - User: "create a sheet"
+            - Agent: *Calls check_app_connection first* ❌
+            - Agent: *Calls generate_auth_link* ❌
+            
+            Example CORRECT usage:
+            - User: "create a sheet"
+            - Agent: *Calls GOOGLESHEETS_CREATE_SPREADSHEET* ✅
+            - Tool fails: "Not authenticated"
+            - Agent: *Calls generate_auth_link* ✅
             """
             # Check if already connected
             if self.check_connection(app_name):
@@ -361,12 +404,21 @@ class AgentKernel:
         
         @tool
         def check_app_connection(app_name: str) -> str:
-            """Check if the user has an active connection to a specific app/tool.
+            """INTERNAL USE ONLY: Check if the user has an active connection to a specific app.
             
-            Use this tool when the user asks about their connection status or wants to know
-            if they're connected to an app before trying to use it.
+            CRITICAL: Only use this tool when:
+            1. User explicitly asks "am I connected to X?"
+            2. User asks "what apps am I connected to?"
             
-            Returns a message indicating whether the user is connected or not.
+            DO NOT use this tool before trying to execute an action. Just try the tool first.
+            
+            Example WRONG usage:
+            - User: "create a sheet"
+            - Agent: *Calls check_app_connection first* ❌
+            
+            Example CORRECT usage:
+            - User: "am I connected to Google Sheets?"
+            - Agent: *Calls check_app_connection* ✅
             """
             is_connected = self.check_connection(app_name)
             
@@ -589,7 +641,13 @@ Never say "I cannot generate images" - you absolutely CAN and SHOULD generate im
             image_capabilities = """
 IMAGE GENERATION: You do NOT have image generation capabilities. If users ask you to generate images, politely explain that you don't have that capability."""
         
-        system_prompt = f"""You are a powerful AI assistant that can ACTUALLY DO THINGS, not just talk about them.
+        # Import proactive system prompt
+        from proactive_agent import ProactivePromptBuilder
+        proactive_behavior = ProactivePromptBuilder.build_proactive_system_prompt()
+        
+        system_prompt = f"""You are a PROACTIVE AI assistant that EXECUTES immediately, not a suggester.
+
+{proactive_behavior}
 
 {autonomous_capabilities}
 
@@ -597,41 +655,68 @@ CONNECTED APPS: {connected_apps_list}
 
 {image_capabilities}
 
-IMPORTANT - You can ONLY use tools from the apps listed above. Do NOT claim to have capabilities you don't have.
+🎯 EXECUTION RULES (CRITICAL - READ CAREFULLY):
 
-When the user asks you to perform actions:
-1. Check if you have the appropriate tool available from your CONNECTED APPS
-2. If the app is connected, use the tool directly to complete the task
-3. If you need to connect to an app first, use generate_auth_link
-4. Always check if the user is connected using check_app_connection before attempting actions
+1. IMMEDIATE EXECUTION - NO PERMISSION ASKING:
+   When user says "create a sheet" → Execute GOOGLESHEETS_CREATE_SPREADSHEET NOW
+   When user says "send email" → Execute GMAIL_SEND_EMAIL NOW
+   When user says "check tasks" → Execute ASANA_GET_MULTIPLE_TASKS NOW
+   When user says "check emails" → Execute GMAIL_FETCH_EMAILS NOW
+   When user says "create event" → Execute GOOGLECALENDAR_CREATE_EVENT NOW
+   
+   NEVER say "Would you like me to..." or "Should I..." - JUST DO IT!
 
-TOOL SELECTION GUIDELINES:
-- Google Docs (GOOGLEDOCS): For creating/editing TEXT DOCUMENTS, reports, letters, articles
-- Google Sheets (GOOGLESHEETS): For creating/editing SPREADSHEETS, tables with calculations, data analysis
-- Google Drive (GOOGLEDRIVE): For file management, uploading, downloading, organizing files
-- Gmail (GMAIL): For email management, sending/reading emails
-- Google Calendar (GOOGLECALENDAR): For calendar events and scheduling
-- Asana (ASANA): For task and project management
-- Anchor Browser (ANCHOR_BROWSER): For web browsing, visiting URLs, searching the web, taking screenshots
-- When user says "docs" or "document", use GOOGLEDOCS tools
-- When user says "sheets" or "spreadsheet", use GOOGLESHEETS tools
-- Never confuse Docs with Sheets - they are completely different applications!
+2. ERROR HANDLING PATTERN:
+   ✅ Try to execute the tool first
+   ✅ If it fails due to missing connection, THEN provide auth link
+   ❌ Don't check connections upfront - let the tool fail and handle it
+   ❌ Don't ask permission before trying
+
+3. RESPONSE PATTERNS:
+   ✅ GOOD: "Done! I created your spreadsheet: [link]"
+   ✅ GOOD: "I found 5 tasks: [list with details]"
+   ✅ GOOD: "Sent! Your email was delivered to [recipient]"
+   
+   ❌ BAD: "Would you like me to create a spreadsheet?"
+   ❌ BAD: "Should I check your tasks?"
+   ❌ BAD: "I can help you with that. What would you like me to do?"
+
+4. TOOL SELECTION (Execute immediately when you see these keywords):
+   - "sheet/spreadsheet/table" → GOOGLESHEETS tools (create, update, read)
+   - "doc/document/report/letter/text" → GOOGLEDOCS tools (create, edit, read)
+   - "email/mail/message" → GMAIL tools (send, fetch, search)
+   - "task/todo/project" → ASANA tools (create, get, update)
+   - "calendar/event/meeting/appointment" → GOOGLECALENDAR tools (create, list, update)
+   - "browse/visit/search web/url" → ANCHOR_BROWSER tools (perform web task)
+   - "file/folder/drive" → GOOGLEDRIVE tools (upload, list, download)
+
+5. CRITICAL - NEVER CONFUSE THESE:
+   - "google doc" / "google document" → Use GOOGLEDOCS tools (creates TEXT documents at docs.google.com/document/)
+   - "google sheet" / "spreadsheet" → Use GOOGLESHEETS tools (creates SPREADSHEETS at docs.google.com/spreadsheets/)
+   - When user says "create a google doc" → Use GOOGLEDOCS_CREATE_DOCUMENT (NOT GOOGLESHEETS!)
+   - When user says "create a google sheet" → Use GOOGLESHEETS_CREATE_SPREADSHEET (NOT GOOGLEDOCS!)
+   - They are COMPLETELY DIFFERENT apps - NEVER mix them up!
 
 {browser_capabilities}
 
-Be helpful and provide clear responses about what you're doing."""
+REMEMBER: You're an EXECUTOR, not a SUGGESTER. When user asks for something, DO IT IMMEDIATELY."""
 
         # Create Agent using langchain's create_agent
         # This accepts both OpenAI function calling format (dicts) and LangChain tools
         try:
+            print(f"DEBUG: Creating agent with {len(all_tools)} tools")
             self.agent_executor = agents.create_agent(
                 model=self.llm,
                 tools=all_tools,
                 system_prompt=system_prompt,
                 debug=True,
             )
+            print("DEBUG: Agent created successfully")
             logger.info("Kernel (Re)Initialized Successfully")
         except Exception as e:
+            print(f"DEBUG: Failed to create agent: {e}")
+            import traceback
+            traceback.print_exc()
             logger.error(f"Failed to create agent: {e}")
             import traceback
             logger.error(traceback.format_exc())
@@ -664,10 +749,51 @@ Be helpful and provide clear responses about what you're doing."""
         logger.info(f"Request to add apps: {new_apps}")
         self.setup(apps=new_apps)
 
+    def run_proactive(self, friction_context: dict) -> str:
+        """
+        Execute a proactive workflow based on detected friction.
+        
+        This method builds solutions autonomously without asking permission.
+        
+        Args:
+            friction_context: Dict from FrictionDetector with friction details
+            
+        Returns:
+            Agent response with built solution
+        """
+        from proactive_agent import ProactivePromptBuilder
+        
+        # Build proactive prompt
+        proactive_prompt = ProactivePromptBuilder.build_proactive_prompt(
+            friction_context,
+            self.active_apps
+        )
+        
+        logger.info(f"🎯 Executing proactive workflow for friction: {friction_context.get('friction_points', [])}")
+        
+        # Execute with proactive mindset
+        return self.run(proactive_prompt)
+    
+    def _should_execute_immediately(self, goal: str) -> bool:
+        """Check if this goal should trigger immediate tool execution without asking."""
+        immediate_triggers = [
+            'create', 'make', 'send', 'check', 'get', 'fetch', 'list',
+            'show', 'find', 'search', 'add', 'update', 'delete', 'remove',
+            'write', 'read', 'open', 'close', 'start', 'stop', 'run'
+        ]
+        
+        goal_lower = goal.lower()
+        return any(trigger in goal_lower for trigger in immediate_triggers)
+    
     def run(self, goal: str):
         """
         The Core Loop: Perception -> Reasoning -> Action
         Enhanced with Mem0 intelligent memory for context-aware responses.
+        
+        Implements Moltbot's "Try First, Handle Errors Later" pattern:
+        1. Try to execute the tool immediately
+        2. If it fails due to connection issues, provide auth link
+        3. Never ask permission upfront - just do it
         """
         if not self.agent_executor:
             # Try lazy init
@@ -693,6 +819,11 @@ Be helpful and provide clear responses about what you're doing."""
             enhanced_goal = f"{context}\n\nCurrent Query: {goal}"
         else:
             enhanced_goal = goal
+        
+        # Add execution hint if this should be immediate
+        if self._should_execute_immediately(goal):
+            enhanced_goal = f"[EXECUTE IMMEDIATELY - Don't ask permission, just do it]\n\n{enhanced_goal}"
+            logger.info("🎯 Immediate execution mode activated")
 
         try:
             logger.info(f"Reasoning on goal: {goal}")
@@ -734,10 +865,73 @@ Be helpful and provide clear responses about what you're doing."""
             return ""
             
         except Exception as e:
+            # Handle connection errors gracefully with Moltbot pattern
+            error_str = str(e).lower()
+            if ("not connected" in error_str or 
+                "authentication" in error_str or 
+                "unauthorized" in error_str or 
+                "not authenticated" in error_str or
+                "no connected account" in error_str or
+                "connectedaccountnotfound" in error_str):
+                logger.warning(f"Connection error detected: {e}")
+                
+                # HYBRID APPROACH: Try regex first (fast), fall back to AI if needed
+                app_name = None
+                
+                # Fast Path 1: Regex pattern matching (instant, free, reliable)
+                import re
+                toolkit_match = re.search(r'for toolkit (\w+)', error_str)
+                if toolkit_match:
+                    app_name = toolkit_match.group(1)
+                    logger.info(f"✅ Extracted app name via regex: {app_name}")
+                
+                # Fast Path 2: Check active_apps
+                if not app_name:
+                    for app in self.active_apps:
+                        if app.lower() in error_str:
+                            app_name = app
+                            logger.info(f"✅ Found app name in active_apps: {app_name}")
+                            break
+                
+                # Slow Path: Use AI to extract app name (only if regex failed)
+                # This handles edge cases where error format is unusual
+                if not app_name and self.llm:
+                    try:
+                        logger.info("⚠️ Regex failed, using AI to extract app name...")
+                        from langchain_core.messages import HumanMessage
+                        ai_response = self.llm.invoke([
+                            HumanMessage(content=f"""Extract the app/toolkit name from this error message. 
+Return ONLY the app name, nothing else.
+
+Error: {str(e)}
+
+Examples:
+- "No connected account found for toolkit notion" → notion
+- "Gmail authentication required" → gmail
+- "Not connected to googlesheets" → googlesheets
+
+App name:""")
+                        ])
+                        app_name = ai_response.content.strip().lower()
+                        logger.info(f"✅ Extracted app name via AI: {app_name}")
+                    except Exception as ai_error:
+                        logger.warning(f"AI extraction failed: {ai_error}")
+                
+                # Generate auth URL if we found an app name
+                if app_name:
+                    try:
+                        auth_url = self.get_auth_url(app_name)
+                        if auth_url:
+                            return f"I tried to use {app_name.upper()} but you're not connected yet. Please authenticate here: {auth_url}\n\nOnce connected, I'll be able to execute your request immediately."
+                    except Exception as auth_error:
+                        logger.warning(f"Failed to get auth URL for {app_name}: {auth_error}")
+                
+                return f"I tried to execute your request but encountered an authentication issue. Please check your connected apps with /tools"
+            
             logger.error(f"Kernel Error: {e}")
             import traceback
             logger.error(traceback.format_exc())
-            return f"Error executing goal: {e}"
+            return f"I encountered an error while executing: {e}"
     
     def _extract_content(self, message):
         """Extract content from various message formats"""
@@ -1241,12 +1435,13 @@ Be helpful and provide clear responses about what you're doing."""
             logger.warning(traceback.format_exc())
             return False
     
-    def get_auth_url(self, app_name: str, force: bool = False):
+    def get_auth_url(self, app_name: str, force: bool = False) -> Optional[str]:
         """Generates connection URL for a toolkit using session.authorize().
         
-        Official Composio pattern from docs:
-        connection_request = session.authorize("github")
-        return connection_request.redirect_url
+        ROBUST AUTH PATTERN (from composio-auth skill):
+        1. CHECK → Is user already connected?
+        2. GENERATE → Create fresh auth URL (never cached)
+        3. VALIDATE → Verify URL format before presenting
         
         Handles common name variations:
         - "google_mail", "googlemail", "Google Mail" -> "gmail"
@@ -1255,11 +1450,16 @@ Be helpful and provide clear responses about what you're doing."""
         Args:
             app_name: Name of the app/toolkit
             force: If True, generate new auth URL even if already connected
+            
+        Returns:
+            Valid auth URL or None if already connected
         """
         if not self.composio_session:
             self.setup()  # Ensure session is created
             if not self.composio_session:
-                raise RuntimeError("Composio session is not available.")
+                # Return fallback URL instead of raising exception
+                logger.error("Composio session is not available - using fallback URL")
+                return self._get_fallback_auth_url(app_name)
 
         # Clean up app name to be a valid toolkit slug
         # e.g. "Google Calendar" -> "googlecalendar", "Gmail" -> "gmail"
@@ -1270,13 +1470,24 @@ Be helpful and provide clear responses about what you're doing."""
             'googlemail': 'gmail',  # google_mail -> gmail
             'googlemaps': 'googlemaps',
             'googlecalendar': 'googlecalendar',
+            'google_calendar': 'googlecalendar',
             'googlesheets': 'googlesheets',
+            'google_sheets': 'googlesheets',
             'googledrive': 'googledrive',
+            'google_drive': 'googledrive',
             'googlecontacts': 'googlecontacts',
             'googledocs': 'googledocs',
+            'google_docs': 'googledocs',
             'googleslides': 'googleslides',
-            'anchorbrowser': 'anchor_browser',  # anchorbrowser -> anchor_browser
-            'browser': 'anchor_browser',  # browser -> anchor_browser
+            'anchorbrowser': 'anchor_browser',
+            'browser': 'anchor_browser',
+            'spreadsheet': 'googlesheets',
+            'spreadsheets': 'googlesheets',
+            'sheets': 'googlesheets',
+            'docs': 'googledocs',
+            'drive': 'googledrive',
+            'calendar': 'googlecalendar',
+            'mail': 'gmail',
         }
         
         # Apply mapping if exists
@@ -1287,31 +1498,436 @@ Be helpful and provide clear responses about what you're doing."""
             logger.info(f"User {self.user_id} already connected to {actual_slug}")
             return None  # Return None to indicate already connected
         
+        # TRY MULTIPLE TIMES with different approaches
+        auth_url = None
+        
+        # Attempt 1: Use session.authorize() - the official pattern
         try:
-            # ✅ OFFICIAL PATTERN: Use session.authorize() 
-            # This handles everything: checking existing connections, creating auth URLs, etc.
             logger.info(f"Authorizing toolkit '{actual_slug}' for user '{self.user_id}'")
             connection_request = self.composio_session.authorize(actual_slug)
             
-            # Extract redirect URL from connection request
-            if hasattr(connection_request, 'redirect_url'):
-                auth_url = connection_request.redirect_url
-            elif hasattr(connection_request, 'redirectUrl'):
-                auth_url = connection_request.redirectUrl
-            elif hasattr(connection_request, 'url'):
-                auth_url = connection_request.url
-            else:
-                # Fallback: convert to string
+            # Extract redirect URL from connection request (API varies)
+            for attr in ['redirect_url', 'redirectUrl', 'url', 'auth_url', 'authorization_url']:
+                if hasattr(connection_request, attr):
+                    auth_url = getattr(connection_request, attr)
+                    if auth_url:
+                        break
+            
+            # If still no URL, try dict access
+            if not auth_url and hasattr(connection_request, '__getitem__'):
+                for key in ['redirect_url', 'redirectUrl', 'url']:
+                    try:
+                        auth_url = connection_request[key]
+                        if auth_url:
+                            break
+                    except (KeyError, TypeError):
+                        continue
+            
+            # Last resort: string conversion
+            if not auth_url:
                 auth_url = str(connection_request)
                 
-            logger.info(f"✅ Generated auth URL for {actual_slug}: {auth_url[:100]}...")
-            return auth_url
+        except Exception as e:
+            logger.warning(f"session.authorize() failed for {actual_slug}: {e}")
+        
+        # VALIDATE the URL before returning
+        if auth_url:
+            if self._validate_auth_url(auth_url):
+                logger.info(f"✅ Generated valid auth URL for {actual_slug}: {auth_url[:80]}...")
+                return auth_url
+            else:
+                logger.warning(f"Invalid auth URL generated: {auth_url[:50]}...")
+        
+        # Fallback: Use direct Composio app URL
+        fallback_url = self._get_fallback_auth_url(actual_slug)
+        logger.info(f"Using fallback auth URL for {actual_slug}: {fallback_url}")
+        return fallback_url
+    
+    def _validate_auth_url(self, url: str) -> bool:
+        """Validate that an auth URL is properly formatted and usable.
+        
+        Based on composio-auth skill validation pattern.
+        """
+        if not url:
+            return False
+        
+        # Must be HTTPS
+        if not url.startswith("https://"):
+            return False
+        
+        # Must not be a placeholder or error message
+        invalid_patterns = [
+            "None",
+            "error",
+            "failed",
+            "invalid",
+            "<",  # HTML error pages
+            "{",  # JSON error responses
+        ]
+        url_lower = url.lower()
+        if any(pattern in url_lower for pattern in invalid_patterns):
+            return False
+        
+        # Must have a valid domain
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            if not parsed.netloc or '.' not in parsed.netloc:
+                return False
+        except Exception:
+            return False
+        
+        return True
+    
+    def _get_fallback_auth_url(self, app_slug: str) -> str:
+        """Generate a fallback Composio auth URL.
+        
+        Uses the direct app page which handles OAuth internally.
+        """
+        # Clean the slug one more time
+        clean_slug = app_slug.lower().replace(" ", "").replace("_", "")
+        
+        # Use the app page URL with entity_id
+        return f"https://app.composio.dev/app/{clean_slug}?entity_id={self.user_id}"
+    
+    # =========================================================================
+    # SKILLS SYSTEM METHODS
+    # =========================================================================
+    
+    def load_skill(self, skill_name: str) -> Optional[str]:
+        """Load a skill for this session.
+        
+        Args:
+            skill_name: Name of the skill to load
+            
+        Returns:
+            Skill prompt content or None if not found
+        """
+        if not self.skill_manager:
+            logger.warning("Skills system not available")
+            return None
+        
+        skill_prompt = self.skill_manager.load_skill(skill_name)
+        if skill_prompt and skill_name not in self.active_skills:
+            self.active_skills.append(skill_name)
+            logger.info(f"🎯 Loaded skill: {skill_name}")
+        return skill_prompt
+    
+    def unload_skill(self, skill_name: str) -> bool:
+        """Unload a skill from this session."""
+        if not self.skill_manager:
+            return False
+        
+        if skill_name in self.active_skills:
+            self.active_skills.remove(skill_name)
+        return self.skill_manager.unload_skill(skill_name)
+    
+    def run_with_skill(self, prompt: str, skill_name: str) -> str:
+        """Run agent with a specific skill loaded.
+        
+        Args:
+            prompt: User's prompt
+            skill_name: Skill to use
+            
+        Returns:
+            Agent response
+        """
+        skill_prompt = self.load_skill(skill_name)
+        if skill_prompt:
+            enhanced_prompt = f"{skill_prompt}\n\n---\n\nUser Request: {prompt}"
+            return self.run(enhanced_prompt)
+        else:
+            return self.run(prompt)
+    
+    def list_skills(self) -> str:
+        """Get a formatted list of available skills."""
+        if not self.skill_manager:
+            return "Skills system not available."
+        return self.skill_manager.get_skills_summary()
+    
+    def find_skill_for_query(self, query: str) -> Optional[str]:
+        """Find a skill that matches the user's query.
+        
+        Returns skill name if found, None otherwise.
+        """
+        if not self.skill_manager:
+            return None
+        
+        skill = self.skill_manager.find_matching_skill(query)
+        return skill.name if skill else None
+    
+    # =========================================================================
+    # PHASE 2: SKILL CREATION METHODS
+    # =========================================================================
+    
+    def create_skill(
+        self, 
+        description: str, 
+        skill_name: Optional[str] = None,
+        save: bool = True
+    ) -> Optional[str]:
+        """Create a new skill from natural language description.
+        
+        Args:
+            description: Natural language description of the workflow
+            skill_name: Optional name (auto-generated if not provided)
+            save: Whether to save immediately (default True)
+            
+        Returns:
+            Success message with skill details or error message
+        """
+        if not self.skill_creator:
+            return "❌ Skills system not available."
+        
+        try:
+            # Create blueprint from description
+            blueprint = self.skill_creator.create_from_description(
+                description=description,
+                skill_name=skill_name,
+                user_id=self.user_id
+            )
+            
+            if save:
+                # Save to disk
+                skill_path = self.skill_creator.save_skill(blueprint)
+                
+                # Refresh skill manager to include new skill
+                if self.skill_manager:
+                    self.skill_manager.discover_skills()
+                
+                return f"""✅ **Skill Created: {blueprint.name}**
+
+**Description:** {blueprint.description}
+
+**Triggers:** {', '.join(blueprint.triggers)}
+
+**Steps:**
+{chr(10).join(f'  {i+1}. {step}' for i, step in enumerate(blueprint.steps))}
+
+**Tools:** {', '.join(blueprint.tools_used) if blueprint.tools_used else 'None detected'}
+
+**Saved to:** `{skill_path}`
+
+Use this skill by saying: *"use {blueprint.name}"* or any of the trigger words."""
+            else:
+                # Store for later confirmation
+                self._pending_skill_creation = blueprint
+                return f"""📋 **Skill Preview: {blueprint.name}**
+
+{blueprint.description}
+
+**Steps:** {len(blueprint.steps)}
+**Triggers:** {', '.join(blueprint.triggers[:3])}...
+
+Say "save skill" to confirm or "cancel" to discard."""
+                
+        except Exception as e:
+            logger.error(f"Skill creation failed: {e}")
+            return f"❌ Failed to create skill: {str(e)}"
+    
+    def create_skill_from_conversation(
+        self,
+        messages: List[Dict[str, str]],
+        skill_name: Optional[str] = None
+    ) -> Optional[str]:
+        """Create a skill from conversation history.
+        
+        Args:
+            messages: List of {"role": "user"|"assistant", "content": str}
+            skill_name: Optional name
+            
+        Returns:
+            Success message or error
+        """
+        if not self.skill_creator:
+            return "❌ Skills system not available."
+        
+        try:
+            blueprint = self.skill_creator.create_from_conversation(
+                messages=messages,
+                skill_name=skill_name,
+                user_id=self.user_id
+            )
+            
+            skill_path = self.skill_creator.save_skill(blueprint)
+            
+            if self.skill_manager:
+                self.skill_manager.discover_skills()
+            
+            return f"""✅ **Skill Learned: {blueprint.name}**
+
+I've extracted this workflow from our conversation:
+
+**Steps:**
+{chr(10).join(f'  {i+1}. {step}' for i, step in enumerate(blueprint.steps))}
+
+Next time, just say *"{blueprint.name}"* and I'll remember what to do!"""
             
         except Exception as e:
-            logger.error(f"Authorization failed for {actual_slug}: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Skill extraction failed: {e}")
+            return f"❌ Failed to extract skill: {str(e)}"
+    
+    def confirm_pending_skill(self) -> str:
+        """Save a pending skill that was previewed."""
+        if not self._pending_skill_creation:
+            return "No pending skill to save."
+        
+        try:
+            blueprint = self._pending_skill_creation
+            self.skill_creator.save_skill(blueprint)
             
-            # Fallback URL
-            return f"https://app.composio.dev/app/{actual_slug}?entity_id={self.user_id}"
+            if self.skill_manager:
+                self.skill_manager.discover_skills()
+            
+            self._pending_skill_creation = None
+            return f"✅ Skill '{blueprint.name}' saved!"
+            
+        except Exception as e:
+            return f"❌ Failed to save skill: {str(e)}"
+    
+    def cancel_pending_skill(self) -> str:
+        """Cancel a pending skill creation."""
+        if self._pending_skill_creation:
+            name = self._pending_skill_creation.name
+            self._pending_skill_creation = None
+            return f"🚫 Skill '{name}' cancelled."
+        return "No pending skill to cancel."
+    
+    def track_query_for_patterns(self, query: str) -> Optional[str]:
+        """Track a query for pattern detection.
+        
+        If similar queries are detected, suggests creating a skill.
+        
+        Args:
+            query: The user's query
+            
+        Returns:
+            Suggestion message if pattern detected, None otherwise
+        """
+        # Add to history
+        self._query_history.append({
+            "query": query,
+            "timestamp": datetime.now().isoformat() if 'datetime' in dir() else None
+        })
+        
+        # Keep only last 50 queries
+        if len(self._query_history) > 50:
+            self._query_history = self._query_history[-50:]
+        
+        # Check for patterns (simple word overlap for now)
+        if len(self._query_history) < 3:
+            return None
+        
+        similar_queries = self._find_similar_queries(query)
+        
+        if len(similar_queries) >= 3:
+            return f"""💡 **Pattern Detected!**
 
+You've asked similar questions {len(similar_queries)} times. Would you like me to create a skill for this?
+
+Recent similar requests:
+{chr(10).join(f'  - "{q[:50]}..."' for q in similar_queries[:3])}
+
+Say "create skill" to save this as a reusable workflow."""
+        
+        return None
+    
+    def _find_similar_queries(self, query: str, threshold: float = 0.5) -> List[str]:
+        """Find queries similar to the given one."""
+        query_words = set(query.lower().split())
+        similar = []
+        
+        for entry in self._query_history:
+            past_query = entry.get("query", "")
+            if past_query == query:
+                continue
+            
+            past_words = set(past_query.lower().split())
+            
+            # Calculate Jaccard similarity
+            if not query_words or not past_words:
+                continue
+            
+            intersection = len(query_words.intersection(past_words))
+            union = len(query_words.union(past_words))
+            similarity = intersection / union if union > 0 else 0
+            
+            if similarity >= threshold:
+                similar.append(past_query)
+        
+        return similar
+    
+    def check_for_skill_suggestion(self, query: str) -> Optional[str]:
+        """Check if we should suggest using or creating a skill.
+        
+        Returns suggestion message if applicable.
+        """
+        # First check if an existing skill matches
+        existing_skill = self.find_skill_for_query(query)
+        if existing_skill:
+            return f"""🎯 **Skill Available: {existing_skill}**
+
+I have a skill that can help with this! Would you like me to use it?
+
+Say "use {existing_skill}" to activate it."""
+        
+        # Check for pattern suggestion
+        pattern_suggestion = self.track_query_for_patterns(query)
+        if pattern_suggestion:
+            return pattern_suggestion
+        
+        return None
+    
+    def get_skill_creation_prompt(self, skill_name: str = "new-skill") -> str:
+        """Get the prompt to help user describe a skill."""
+        if not self.skill_creator:
+            return "Skills system not available."
+        return self.skill_creator.get_creation_prompt(skill_name, self.user_id)
+    
+    def smart_run(self, goal: str) -> str:
+        """Enhanced run that checks for skills and patterns.
+        
+        This is the recommended entry point that:
+        1. Checks for matching skills
+        2. Detects patterns for skill suggestions
+        3. Auto-loads relevant skills
+        4. Executes the request
+        """
+        # Check for skill-related commands
+        goal_lower = goal.lower().strip()
+        
+        if goal_lower.startswith("create skill"):
+            # Extract description after "create skill"
+            description = goal[len("create skill"):].strip()
+            if description:
+                return self.create_skill(description)
+            else:
+                return self.get_skill_creation_prompt()
+        
+        if goal_lower in ["save skill", "confirm skill"]:
+            return self.confirm_pending_skill()
+        
+        if goal_lower in ["cancel skill", "cancel"]:
+            return self.cancel_pending_skill()
+        
+        if goal_lower.startswith("use "):
+            skill_name = goal[4:].strip()
+            return self.run_with_skill(goal, skill_name)
+        
+        if goal_lower == "list skills" or goal_lower == "skills":
+            return self.list_skills()
+        
+        # Check for matching skill
+        matching_skill = self.find_skill_for_query(goal)
+        if matching_skill:
+            logger.info(f"Auto-loading matching skill: {matching_skill}")
+            return self.run_with_skill(goal, matching_skill)
+        
+        # Track for patterns (but don't interrupt with suggestion)
+        self.track_query_for_patterns(goal)
+        
+        # Regular execution
+        return self.run(goal)
+    
+# Import datetime for pattern tracking
+from datetime import datetime

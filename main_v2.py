@@ -215,59 +215,47 @@ def _extract_image_prompt(text: str) -> Optional[str]:
     if not trimmed:
         return None
 
-    # Check for simple keyword combinations first (Most robust)
     lowered = trimmed.lower()
 
     # 1. Check for /image command first (highest priority)
     if lowered.startswith("/image") or lowered.startswith("/img"):
         return trimmed.replace("/image", "").replace("/img", "").strip()
 
-    # 2. Check for "generate/create/make/draw" at the start (strong signal for image generation)
-    generation_verbs = [
-        "generate",
-        "create",
-        "make",
-        "draw",
-        "render",
-        "design",
-        "produce",
-        "show me",
-        "give me",
+    # 2. EXPLICIT image keywords - must have these to be considered image generation
+    visual_nouns = ["image", "picture", "photo", "illustration", "art", "drawing", "artwork", "painting", "sketch"]
+    has_visual_noun = any(noun in lowered for noun in visual_nouns)
+    
+    # 3. Check for explicit "image of..." patterns (highest confidence)
+    explicit_patterns = [
+        "image of", "picture of", "photo of", "illustration of", "art of",
+        "drawing of", "painting of", "sketch of"
     ]
-    
-    # Check if message starts with a generation verb
-    starts_with_verb = any(lowered.startswith(v) for v in generation_verbs)
-    
-    if starts_with_verb:
-        # If it starts with a generation verb, it's likely an image request
-        # Examples: "Generate a house", "Create a sunset", "Draw a cat"
-        logger.info(f"🎨 Detected image request (starts with generation verb): {trimmed[:50]}...")
-        return trimmed
-    
-    # 3. Check for explicit "image/picture/photo" keywords
-    visual_nouns = ["image", "picture", "photo", "illustration", "art", "drawing", "artwork"]
-    has_noun = any(n in lowered for n in visual_nouns)
-    
-    # 4. Check for "generate/create" + "image/picture" anywhere in the text
-    has_verb = any(v in lowered for v in generation_verbs)
-    
-    if has_verb and has_noun:
-        # It's likely an image request with explicit visual noun
-        logger.info(f"🎨 Detected image request (verb + noun): {trimmed[:50]}...")
-        clean_prompt = (
-            trimmed.replace("Please ", "")
-            .replace("please ", "")
-            .replace("Generate ", "")
-            .replace("generate ", "")
-            .strip()
-        )
-        return clean_prompt or trimmed
-
-    # 5. Check for explicit "image of..." patterns
-    for key in ["image of", "picture of", "photo of", "illustration of", "art of"]:
-        if key in lowered:
+    for pattern in explicit_patterns:
+        if pattern in lowered:
             logger.info(f"🎨 Detected image request (explicit pattern): {trimmed[:50]}...")
             return trimmed
+    
+    # 4. Check for "generate/create/make/draw" + explicit visual noun
+    # This prevents "create a spreadsheet" from being treated as image generation
+    generation_verbs = ["generate", "create", "make", "draw", "render", "design", "produce"]
+    
+    if has_visual_noun:
+        # Only consider it an image request if there's BOTH a verb AND a visual noun
+        has_verb = any(verb in lowered for verb in generation_verbs)
+        if has_verb:
+            logger.info(f"🎨 Detected image request (verb + visual noun): {trimmed[:50]}...")
+            return trimmed
+    
+    # 5. Special case: "draw" at the start is usually for images
+    if lowered.startswith("draw "):
+        logger.info(f"🎨 Detected image request (starts with 'draw'): {trimmed[:50]}...")
+        return trimmed
+    
+    # 6. Special case: "show me a picture/image" patterns
+    show_patterns = ["show me a picture", "show me an image", "show me a photo"]
+    if any(pattern in lowered for pattern in show_patterns):
+        logger.info(f"🎨 Detected image request (show me pattern): {trimmed[:50]}...")
+        return trimmed
 
     return None
 
@@ -811,7 +799,20 @@ Be thorough but present it in a digestible format."""
         if not msg_text:
             return ""
 
-        # Run through the AI agent
+        # 🎯 PROACTIVE MODE: Detect friction and act autonomously
+        from proactive_agent import FrictionDetector
+        
+        friction = FrictionDetector.detect(msg_text)
+        
+        if friction['has_friction']:
+            logger.info(f"🎯 Friction detected: {[fp['keyword'] for fp in friction['friction_points']]}")
+            logger.info(f"   Categories: {list(set([fp['category'] for fp in friction['friction_points']]))}")
+            
+            # Execute proactive workflow - agent will build solution autonomously
+            result = user_kernel.run_proactive(friction)
+            return strip_markdown(result)
+        
+        # Run through the AI agent (normal mode)
         result = user_kernel.run(msg_text)
         return strip_markdown(result)
 

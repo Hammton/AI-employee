@@ -75,3 +75,9 @@ qr_test.png
 *.gif
 !docs/*.png
 !docs/*.jpg
+
+# Test outputs
+test_output.*
+test_sunset.*
+test_*.png
+test_*.jpg
