@@ -63,8 +63,14 @@ LLM_MODEL=google/gemini-3-flash-preview
 start_local.bat
 
 # Linux/Mac
+chmod +x start_local.sh
 ./start_local.sh
 ```
+
+This will:
+- Start the WhatsApp Bridge (Node.js) on port 3001
+- Start the AI Agent (Python) on port 8000
+- Open a window with QR code for WhatsApp
 
 6. **Scan QR code** with WhatsApp to connect
 
@@ -125,6 +131,20 @@ Agent: ✅ [Generated image]
 
 ## 🏗️ Architecture
 
+The system consists of two main components that work together:
+
+### 1. WhatsApp Bridge (Node.js)
+- Handles WhatsApp Web connection
+- Manages QR code authentication
+- Forwards messages to Python agent
+- Runs on port 3001
+
+### 2. AI Agent (Python)
+- Processes messages with LLM
+- Executes tools via Composio
+- Manages user context and memory
+- Runs on port 8000
+
 ```
 ┌─────────────────┐
 │   WhatsApp      │
@@ -133,14 +153,14 @@ Agent: ✅ [Generated image]
          │
          ▼
 ┌─────────────────┐
-│  WPP Bridge     │
+│  WPP Bridge     │  ← Port 3001 (Node.js)
 │  (Node.js)      │
 └────────┬────────┘
-         │
+         │ HTTP
          ▼
 ┌─────────────────┐
-│   Main Agent    │
-│   (main_v2.py)  │
+│   Main Agent    │  ← Port 8000 (Python)
+│   (main.py)     │
 └────────┬────────┘
          │
          ▼
@@ -152,7 +172,7 @@ Agent: ✅ [Generated image]
     ┌────┴────┐
     ▼         ▼
 ┌────────┐ ┌──────────┐
-│ LangChain│ │ Composio │
+│LangChain│ │ Composio │
 │ (LLM)   │ │ (Tools)  │
 └─────────┘ └──────────┘
 ```

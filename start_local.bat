@@ -58,4 +58,4 @@ echo Press Ctrl+C to stop
 echo ========================================
 echo.
 
-python main_v2.py
+python main.py
